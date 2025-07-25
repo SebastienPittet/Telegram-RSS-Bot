@@ -11,11 +11,13 @@ import os
 
 
 # Basic configuration for logging events
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 
 
 # Functions
+
 
 def load_configuration(configfile: str = "configuration.toml") -> dict:
     """
@@ -75,15 +77,15 @@ def load_configuration(configfile: str = "configuration.toml") -> dict:
     return config
 
 
-def send_message(bot_token: str,
-                 channel_id: str,
-                 message: str):
+def send_message(bot_token: str, channel_id: str, message: str):
     """
     Update the Telegram bot, using a security token,
     a channel id and a message to post.
     """
     try:
-        requests.get(f'https://api.telegram.org/bot{bot_token}/sendMessage?chat_id={channel_id}&text={message}')
+        requests.get(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage?chat_id={channel_id}&text={message}"
+        )
         logging.info(f"Bot content updated with {message}.")
     except requests.exceptions as e:
         logging.exception(f"An exception occurred:  {str(e)}")
@@ -92,8 +94,7 @@ def send_message(bot_token: str,
 
 
 # Parsing rss
-def parse_rss(rss_feeds: list,
-              entry_max_time_old: int):
+def parse_rss(rss_feeds: list, entry_max_time_old: int):
     """
     Parse a list of RSS feeds, defined in a configuration file.
     Only keep the latest news (ENTRY_MAX_TIME_OLD).
@@ -124,9 +125,11 @@ def parse_rss(rss_feeds: list,
             deltatime = parsecurrenttime - parsepublishedtime
 
             # For debugging purposes
-            logging.debug(f"Processing entry: {entry.title}, Published time: {parsepublishedtime}, Delta time: {deltatime.total_seconds()} seconds")
+            logging.debug(
+                f"Processing entry: {entry.title}, Published time: {parsepublishedtime}, Delta time: {deltatime.total_seconds()} seconds"
+            )
 
-            if (deltatime.total_seconds() < entry_max_time_old):
+            if deltatime.total_seconds() < entry_max_time_old:
                 logging.info(f"Added new entry: {entry.title} -> {entry.link}")
 
                 # Update telegram bot
@@ -140,6 +143,7 @@ def parse_rss(rss_feeds: list,
     logging.debug("Feeds checked. Sleeping for now.")
     return
 
+
 # ######################################################################################
 
 
@@ -147,11 +151,11 @@ def parse_rss(rss_feeds: list,
 config = load_configuration()
 
 # Get values from configuration
-bot_token = config['BOT_TOKEN']
-channel_id = config['CHANNEL_ID']
-rss_urls = config['RSS_URLS']
-entry_max_time_old = config['ENTRY_MAX_TIME_OLD']
-time_interval_min = config['TIME_INTERVAL_MIN']
+bot_token = config["BOT_TOKEN"]
+channel_id = config["CHANNEL_ID"]
+rss_urls = config["RSS_URLS"]
+entry_max_time_old = config["ENTRY_MAX_TIME_OLD"]
+time_interval_min = config["TIME_INTERVAL_MIN"]
 
 # TEST
 # Send a test message using the loaded configuration
@@ -164,9 +168,9 @@ time_interval_min = config['TIME_INTERVAL_MIN']
 
 def main():
     # Schedule the task to run every n minutes
-    schedule.every(time_interval_min).minutes.do(parse_rss,
-                                                 rss_feeds=rss_urls,
-                                                 entry_max_time_old=entry_max_time_old)
+    schedule.every(time_interval_min).minutes.do(
+        parse_rss, rss_feeds=rss_urls, entry_max_time_old=entry_max_time_old
+    )
     logging.info(f"Scheduler set for a run every {time_interval_min} minutes.")
 
     # Run the scheduled tasks indefinitely
@@ -175,5 +179,5 @@ def main():
         time.sleep(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
