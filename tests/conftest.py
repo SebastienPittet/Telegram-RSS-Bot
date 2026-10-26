@@ -53,7 +53,9 @@ class FakeResponse:
     ) -> None:
         self.status_code = status_code
         self.content = content.encode() if isinstance(content, str) else content
-        self.text = text or (content if isinstance(content, str) else content.decode("utf-8", errors="replace"))
+        self.text = text or (
+            content if isinstance(content, str) else content.decode("utf-8", errors="replace")
+        )
         self.url = url
 
     @property

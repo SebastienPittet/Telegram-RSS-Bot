@@ -68,7 +68,9 @@ def live_server() -> object:
     server.server_close()
 
 
-def test_end_to_end_cycle_publishes_over_http(live_server: str, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_end_to_end_cycle_publishes_over_http(
+    live_server: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     POSTED.clear()
     monkeypatch.setattr(
         "bot.telegram.TELEGRAM_API_BASE", live_server, raising=False

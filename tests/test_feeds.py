@@ -54,7 +54,9 @@ def test_parse_feed_garbage_returns_empty_tuple() -> None:
 
 
 def test_parse_feed_falls_back_to_link_as_id() -> None:
-    payload = make_rss([{"title": "T", "link": "https://example.com/x", "guid": "", "age_seconds": 1}])
+    payload = make_rss(
+        [{"title": "T", "link": "https://example.com/x", "guid": "", "age_seconds": 1}]
+    )
     (only,) = parse_feed(payload)
     assert only.entry_id == "https://example.com/x"
 
@@ -64,7 +66,7 @@ def test_parse_feed_atom_format() -> None:
         b'<?xml version="1.0" encoding="utf-8"?>'
         b'<feed xmlns="http://www.w3.org/2005/Atom">'
         b"<entry><title>Atom post</title>"
-        b"<link href=\"https://example.com/atom-post\"/>"
+        b'<link href="https://example.com/atom-post"/>'
         b"<id>tag:example.com,2026:atom-post</id>"
         b"<updated>2026-10-26T11:55:00Z</updated></entry></feed>"
     )

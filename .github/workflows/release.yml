@@ -58,7 +58,7 @@ jobs:
       - name: Generate and push SBOM
         run: |
           pip install --quiet cyclonedx-bom==7.5.0
-          cyclonedx-py requirements requirements.txt --output-format json --outfile sbom.json
+          cyclonedx-py requirements requirements.txt --of JSON -o sbom.json
           echo "SBOM attached to workflow artifacts (image tags: ${{ steps.meta.outputs.tags }})"
 
       - uses: actions/upload-artifact@v4

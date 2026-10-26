@@ -21,7 +21,14 @@ CONFIG = Config(
 
 def make_feed(age_seconds: int, ident: str) -> bytes:
     return make_rss(
-        [{"title": f"News {ident}", "link": f"https://ex.com/{ident}", "guid": ident, "age_seconds": age_seconds}]
+        [
+            {
+                "title": f"News {ident}",
+                "link": f"https://ex.com/{ident}",
+                "guid": ident,
+                "age_seconds": age_seconds,
+            }
+        ]
     )
 
 
@@ -30,7 +37,10 @@ def make_feed(age_seconds: int, ident: str) -> bytes:
 
 def test_collect_entries_fetches_all_urls() -> None:
     session = FakeSession()
-    session.get_responses += [FakeResponse(200, make_feed(10, "a")), FakeResponse(200, make_feed(20, "b"))]
+    session.get_responses += [
+        FakeResponse(200, make_feed(10, "a")),
+        FakeResponse(200, make_feed(20, "b")),
+    ]
     entries = collect_entries(CONFIG.rss_urls, session)  # type: ignore[arg-type]
     assert sorted(session.get_calls) == ["https://feed.example/a", "https://feed.example/b"]
     assert {e.entry_id for e in entries} == {"a", "b"}
@@ -40,14 +50,20 @@ def test_collect_entries_survives_one_failing_feed() -> None:
     import requests
 
     session = FakeSession()
-    session.get_responses += [requests.ConnectionError("dns failure"), FakeResponse(200, make_feed(10, "b"))]
+    session.get_responses += [
+        requests.ConnectionError("dns failure"),
+        FakeResponse(200, make_feed(10, "b")),
+    ]
     entries = collect_entries(CONFIG.rss_urls, session)  # type: ignore[arg-type]
     assert [e.entry_id for e in entries] == ["b"]
 
 
 def test_collect_entries_survives_unparseable_feed() -> None:
     session = FakeSession()
-    session.get_responses += [FakeResponse(200, b"<html>nope</html>"), FakeResponse(200, make_feed(10, "b"))]
+    session.get_responses += [
+        FakeResponse(200, b"<html>nope</html>"),
+        FakeResponse(200, make_feed(10, "b")),
+    ]
     entries = collect_entries(CONFIG.rss_urls, session)  # type: ignore[arg-type]
     assert [e.entry_id for e in entries] == ["b"]
 
@@ -61,7 +77,10 @@ def test_collect_entries_empty_url_list() -> None:
 
 def test_run_cycle_publishes_fresh_entries() -> None:
     session = FakeSession()
-    session.get_responses += [FakeResponse(200, make_feed(60, "a")), FakeResponse(200, make_feed(120, "b"))]
+    session.get_responses += [
+        FakeResponse(200, make_feed(60, "a")),
+        FakeResponse(200, make_feed(120, "b")),
+    ]
     session.post_responses += [FakeResponse(200), FakeResponse(200)]
     seen: dict[str, float] = {}
     sent = run_cycle(CONFIG, session, seen, now=NOW)  # type: ignore[arg-type]
@@ -73,14 +92,20 @@ def test_run_cycle_publishes_fresh_entries() -> None:
 
 def test_run_cycle_skips_old_entries() -> None:
     session = FakeSession()
-    session.get_responses += [FakeResponse(200, make_feed(9999, "old")), FakeResponse(200, make_rss([]))]
+    session.get_responses += [
+        FakeResponse(200, make_feed(9999, "old")),
+        FakeResponse(200, make_rss([])),
+    ]
     sent = run_cycle(CONFIG, session, {}, now=NOW)  # type: ignore[arg-type]
     assert sent == 0 and session.post_calls == []
 
 
 def test_run_cycle_does_not_republish_seen_entries() -> None:
     session = FakeSession()
-    session.get_responses += [FakeResponse(200, make_feed(60, "a")), FakeResponse(200, make_rss([]))]
+    session.get_responses += [
+        FakeResponse(200, make_feed(60, "a")),
+        FakeResponse(200, make_rss([])),
+    ]
     session.post_responses.append(FakeResponse(200))
     seen = {"a": NOW.timestamp() - 300}
     assert run_cycle(CONFIG, session, seen, now=NOW) == 0  # type: ignore[arg-type]
@@ -88,7 +113,10 @@ def test_run_cycle_does_not_republish_seen_entries() -> None:
 
 def test_run_cycle_keeps_failed_sends_unseen_for_retry() -> None:
     session = FakeSession()
-    session.get_responses += [FakeResponse(200, make_feed(60, "a")), FakeResponse(200, make_rss([]))]
+    session.get_responses += [
+        FakeResponse(200, make_feed(60, "a")),
+        FakeResponse(200, make_rss([])),
+    ]
     session.post_responses.append(FakeResponse(400, "rejected"))
     seen: dict[str, float] = {}
     assert run_cycle(CONFIG, session, seen, now=NOW) == 0  # type: ignore[arg-type]
@@ -117,7 +145,9 @@ def test_write_heartbeat_noop_when_unset() -> None:
     write_heartbeat("")  # must not raise
 
 
-def test_write_heartbeat_survives_os_error(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_write_heartbeat_survives_os_error(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     with caplog.at_level("WARNING"):
         write_heartbeat(str(tmp_path))  # a directory -> IsADirectoryError
     assert "heartbeat" in caplog.text.lower()
@@ -126,6 +156,9 @@ def test_write_heartbeat_survives_os_error(tmp_path: Path, caplog: pytest.LogCap
 @pytest.mark.parametrize("bad_url_status", [404, 500])
 def test_collect_entries_skips_http_errors(bad_url_status: int) -> None:
     session = FakeSession()
-    session.get_responses += [FakeResponse(bad_url_status, b"nope"), FakeResponse(200, make_feed(10, "ok"))]
+    session.get_responses += [
+        FakeResponse(bad_url_status, b"nope"),
+        FakeResponse(200, make_feed(10, "ok")),
+    ]
     entries = collect_entries(CONFIG.rss_urls, session)  # type: ignore[arg-type]
     assert [e.entry_id for e in entries] == ["ok"]

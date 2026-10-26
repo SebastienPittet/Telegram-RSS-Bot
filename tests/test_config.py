@@ -48,7 +48,7 @@ def test_split_urls_splits_on_commas_and_newlines() -> None:
 
 
 def test_split_urls_strips_quotes_and_empty_tokens() -> None:
-    assert split_urls('"https://a/f" \'\'   ') == ("https://a/f",)
+    assert split_urls("\"https://a/f\" ''   ") == ("https://a/f",)
 
 
 # --- validation helpers --------------------------------------------------
@@ -143,7 +143,7 @@ def test_parse_toml_config_accepts_string_rss_urls() -> None:
 def test_load_config_prefers_toml_file(tmp_path: Path) -> None:
     path = tmp_path / "configuration.toml"
     path.write_text(
-        'TIME_INTERVAL_MIN = 5\nENTRY_MAX_TIME_OLD = 60\n'
+        "TIME_INTERVAL_MIN = 5\nENTRY_MAX_TIME_OLD = 60\n"
         'BOT_TOKEN = "toml-token"\nCHANNEL_ID = "@chan"\n'
         'RSS_URLS = ["https://toml.example/feed"]\n',
         encoding="utf-8",
