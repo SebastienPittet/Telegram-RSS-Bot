@@ -1,15 +1,26 @@
-# Use an Alpine Linux image with Python 3 installed
-FROM python:3.12.2-alpine3.19
+# Hardened runtime image: pinned versions, non-root user, read-friendly defaults.
+FROM python:3.13.5-alpine3.22
 
-# Set the working directory in the container
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# Non-root user (matches the Kubernetes securityContext runAsUser).
+RUN addgroup -g 10001 app && adduser -S -D -u 10001 -G app app
+
 WORKDIR /app
 
-# Copy the requirements and install Python dependencies
-COPY requirements.txt /app/
-RUN pip3 install --no-cache-dir -r requirements.txt
+# Install dependencies first to maximise layer caching.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the bot script and configuration file into the container
-COPY bot/telegram_rss_bot.py /app/
+COPY bot/ ./bot/
 
-# Use dotenv library to load environment variables at runtime
-CMD ["sh", "-c", "python telegram_rss_bot.py"]
+# Writable heartbeat directory (mounted as emptyDir in Kubernetes).
+RUN mkdir -p /app/state && chown -R app:app /app
+
+USER 10001
+ENV HEARTBEAT_FILE=/app/state/heartbeat
+
+# Exec form: python runs as PID 1 and receives SIGTERM for graceful shutdown.
+ENTRYPOINT ["python", "-m", "bot"]
