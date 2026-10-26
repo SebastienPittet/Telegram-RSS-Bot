@@ -1,51 +1,129 @@
+# Deploy telegram-rss-bot (singleton worker) in a dedicated namespace.
+# Best practices applied: least-privilege SecurityContexts, pinned image,
+# ConfigMap/Secret split, resource limits, meaningful liveness probe.
 ---
-# Deploy telegram-rss-bot in a namespace
 apiVersion: v1
 kind: Namespace
 metadata:
   name: telegram-rss-bot
+  labels:
+    app.kubernetes.io/name: telegram-rss-bot
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: telegram-rss-bot-config
+  namespace: telegram-rss-bot
+  labels:
+    app.kubernetes.io/name: telegram-rss-bot
+data:
+  TIME_INTERVAL_MIN: "20"      # run a feed cycle every 20 minutes
+  ENTRY_MAX_TIME_OLD: "1200"   # publish entries younger than 20 minutes
+  LOG_LEVEL: "INFO"
+  HEARTBEAT_FILE: "/app/state/heartbeat"
+  RSS_URLS: |
+    https://www.ictjournal.ch/taxonomy/term/404/feed
+    https://www.ictjournal.ch/taxonomy/term/31/feed
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: telegram-rss-bot-secrets
+  namespace: telegram-rss-bot
+  labels:
+    app.kubernetes.io/name: telegram-rss-bot
+type: Opaque
+stringData:
+  # Replace via CI/CD (sealed-secrets, SOPS, external secrets) — never commit real values.
+  BOT_TOKEN: "CHANGEME"
+  CHANNEL_ID: "@YourChannel"
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: telegram-rss-bot
   namespace: telegram-rss-bot
+  labels:
+    app.kubernetes.io/name: telegram-rss-bot
+    app.kubernetes.io/part-of: telegram-rss-bot
 spec:
   replicas: 1
+  revisionHistoryLimit: 3
+  # Recreate avoids two pods posting to the same channel during rollout.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
-      app: telegram-rss-bot
-  strategy:
-    rollingUpdate:
-      maxSurge: 25%
-      maxUnavailable: 25%
-    type: RollingUpdate
+      app.kubernetes.io/name: telegram-rss-bot
   template:
     metadata:
       labels:
-        app: telegram-rss-bot
+        app.kubernetes.io/name: telegram-rss-bot
     spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 15
+      # imagePullSecrets:
+      #   - name: exo-registry-credentials   # required for private registries
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
-      - name: telegram-rss-bot
-        image: exo.container-registry.com/pittet-sebastien/telegram-rss-bot:latest
-        env:
-        - name: TIME_INTERVAL_MIN
-          value: "20"
-        - name: ENTRY_MAX_TIME_OLD
-          value: "1200"
-        - name: RSS_URLS
-          value: |
-            "https://www.ictjournal.ch/taxonomy/term/404/feed
-            https://www.ictjournal.ch/taxonomy/term/31/feed"
-        resources:
-          requests:
-            memory: 20M
-            cpu: 0.1
-        livenessProbe:
-          exec:
-            command:
-            - ls
-            - /app
-          initialDelaySeconds: 5
-          periodSeconds: 60
----
+        - name: telegram-rss-bot
+          # Pin an immutable version (git-sha or semver tag produced by CI).
+          image: exo.container-registry.com/pittet-sebastien/telegram-rss-bot:v2.0.0
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: telegram-rss-bot-config
+            - secretRef:
+                name: telegram-rss-bot-secrets
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 192Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: state
+              mountPath: /app/state
+          # Liveness: the bot must refresh its heartbeat file (3x the 20-min cycle).
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - |
+                  import os, sys, time
+                  p = os.environ.get("HEARTBEAT_FILE", "/app/state/heartbeat")
+                  ok = os.path.exists(p) and time.time() - os.path.getmtime(p) < 3900
+                  sys.exit(0 if ok else 1)
+            initialDelaySeconds: 90
+            periodSeconds: 300
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # Readiness: heartbeat file exists at all.
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - |
+                  import os, sys
+                  sys.exit(0 if os.path.exists(os.environ.get("HEARTBEAT_FILE", "/app/state/heartbeat")) else 1)
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            timeoutSeconds: 5
+      volumes:
+        - name: state
+          emptyDir:
+            sizeLimit: 1Mi
