@@ -8,8 +8,8 @@ WORKDIR /app
 COPY requirements.txt /app/
 RUN pip3 install --no-cache-dir -r requirements.txt
 
-# Copy the bot script and configuration file into the container
-COPY bot/telegram_rss_bot.py /app/
+# Copy the bot package into the container
+COPY bot/ /app/bot/
 
-# Use dotenv library to load environment variables at runtime
-CMD ["sh", "-c", "python telegram_rss_bot.py"]
+# Run the bot (loads configuration from ENV Vars / .env at runtime)
+CMD ["python", "-m", "bot"]
