@@ -1,0 +1,48 @@
+# Example configuration for the Telegram RSS bot.
+#
+# Copy this file to `configuration.toml` at the repository root:
+#
+#     cp configuration.toml.example configuration.toml
+#
+# Both `configuration.toml` and `configuration.*.toml` are git-ignored, so your
+# token can never be committed by accident. To keep secrets entirely outside the
+# source tree, put the file anywhere you like and point at it:
+#
+#     python -m bot --config ~/.config/telegram-rss-bot/config.toml
+#
+# Every key below is required. If this file is missing or invalid, the bot falls
+# back to environment variables (see .env.example).
+
+# General settings -------------------------------------------------------------
+
+# How often to poll the feeds, in minutes.
+TIME_INTERVAL_MIN = 20
+
+# Maximum age of a feed entry still worth publishing, in seconds (1200 = 20 min).
+# Keep it close to TIME_INTERVAL_MIN: entries older than this are skipped.
+ENTRY_MAX_TIME_OLD = 1200
+
+# Bot configuration ------------------------------------------------------------
+
+# Token issued by @BotFather. Treat it as a password.
+BOT_TOKEN = "YOUR BOT TOKEN"
+
+# Target channel: "@YourChannel" for a public channel, or its numeric id
+# (e.g. "-1001234567890"). The bot must be an admin of the channel.
+CHANNEL_ID = "@YourChannel"
+
+# News, RSS feeds --------------------------------------------------------------
+
+# One URL per line is the clearest form. A plain string also works; URLs may be
+# separated by commas and/or whitespace:
+#   RSS_URLS = "https://korben.info/feed, https://www.numerama.com/feed/"
+RSS_URLS = [
+    "https://korben.info/feed",
+    "https://www.ictjournal.ch/taxonomy/term/404/feed",
+    "https://www.ictjournal.ch/taxonomy/term/31/feed",
+    "https://www.ictjournal.ch/taxonomy/term/406/feed",
+    "https://www.newsd.admin.ch/newsd/feeds/rss?lang=fr&org-nr=1&offer-nr=308",
+    "https://feeds.feedburner.com/TheHackersNews",
+    "https://mspoweruser.com/feed/",
+    "https://www.numerama.com/feed/",
+]
