@@ -36,7 +36,26 @@ jobs:
       - name: Mypy
         run: mypy
       - name: Actionlint (workflow self-check)
-        run: docker run --rm -v "$PWD:/repo" ghcr.io/rhysd/actionlint:latest
+        # ghcr.io refuses anonymous pulls of this image: its token endpoint answers
+        # 403 DENIED. The pinned release binary is downloaded from github.com instead
+        # and verified against the published SHA-256 before being executed.
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256_AMD64: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          ACTIONLINT_SHA256_ARM64: 325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            x86_64) arch=amd64; sum="$ACTIONLINT_SHA256_AMD64" ;;
+            aarch64|arm64) arch=arm64; sum="$ACTIONLINT_SHA256_ARM64" ;;
+            *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_${arch}.tar.gz"
+          curl -sSfL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          echo "$sum  $RUNNER_TEMP/$archive" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
 
   unit-tests:
     name: Unit tests
