@@ -1,4 +1,9 @@
 # Telegram-RSS-bot
+
+[![CI](https://github.com/SebastienPittet/Telegram-RSS-Bot/actions/workflows/ci.yml/badge.svg)](https://github.com/SebastienPittet/Telegram-RSS-Bot/actions/workflows/ci.yml)
+[![Release image](https://github.com/SebastienPittet/Telegram-RSS-Bot/actions/workflows/release.yml/badge.svg)](https://github.com/SebastienPittet/Telegram-RSS-Bot/actions/workflows/release.yml)
+![PR size](https://img.shields.io/badge/PR%20size-labeled%20automatically-informational)
+![Python](https://img.shields.io/badge/python-3.12-blue)
 Bot for telegram channel, example with: [Swiss-IT-News](https://t.me/SwissITNews)
 
 # How to use this bot
