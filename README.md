@@ -195,6 +195,51 @@ This chapter guides you through creating your Telegram channel and setting up a 
 2. Give your bot permissions to post messages.
 
 
+## Running the bot
+
+`bot/` is a package, so it is started as a module **from the repository root** — the same
+command the Docker `ENTRYPOINT` and the Kubernetes manifest run:
+
+```bash
+cd Telegram-RSS-Bot
+python -m bot                    # run on the configured schedule
+python -m bot --once             # single cycle then exit: ideal to test a token or a feed
+python -m bot --config /path/to/config.toml --log-level DEBUG
+```
+
+Starting the script itself (`python bot/telegram_rss_bot.py`) fails with
+`ModuleNotFoundError: No module named 'bot'`: from inside the package, the package is not
+importable. Exit codes are `0` success, `1` a cycle crashed (`--once` only), `2` bad configuration.
+
+### Configuration templates
+
+Two commented templates are versioned — copy one and fill in your token:
+
+| Template                      | How to use it                                                    |
+| ----------------------------- | ---------------------------------------------------------------- |
+| `configuration.toml.example`  | `cp` to `configuration.toml` at the repository root              |
+| `.env.example`                | `cp` to `.env`; read only when no TOML file is present           |
+
+Both copies are git-ignored, so the bot token cannot be committed. They declare the same
+feed list, and a test asserts that both stay parseable and identical.
+
+`--config` is resolved against your **current directory**, not the repository, and an invalid
+TOML file makes the bot fall back to environment variables. To keep secrets out of the working
+tree, store the file elsewhere and pass an absolute path:
+
+```bash
+mkdir -p ~/.config/telegram-rss-bot && chmod 700 ~/.config/telegram-rss-bot
+cp configuration.toml.example ~/.config/telegram-rss-bot/config.toml
+chmod 600 ~/.config/telegram-rss-bot/config.toml
+python -m bot --config ~/.config/telegram-rss-bot/config.toml --once
+```
+
+Two more environment variables are available: `LOG_LEVEL` (DEBUG, INFO, WARNING, ERROR) and
+`HEARTBEAT_FILE`, which touches a file after each cycle for the Kubernetes liveness probe.
+
+The Kubernetes manifests inject the same keys through a ConfigMap and a Secret, so no file is
+needed there. See `kubernetes/kube-manifest.yaml`.
+
 # Configuration
 This code supports a TOML formatted configuration file:
 ```toml

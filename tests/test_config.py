@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 from typing import Any
 
 import pytest
+from dotenv import dotenv_values
 
 from bot.config import (
     Config,
@@ -175,3 +177,32 @@ def test_config_is_immutable() -> None:
     config = parse_env_config(VALID_ENV)
     with pytest.raises(dataclasses.FrozenInstanceError):
         config.time_interval_min = 99  # type: ignore[misc]
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+EXPECTED_FEED_COUNT = 8
+
+
+def test_toml_example_committed_in_repo_is_valid() -> None:
+    """`configuration.toml.example` must stay parseable as feeds are edited."""
+    with (REPO_ROOT / "configuration.toml.example").open("rb") as handle:
+        config = parse_toml_config(tomllib.load(handle))
+
+    assert config.time_interval_min > 0
+    assert config.entry_max_time_old > 0
+    assert len(config.rss_urls) == EXPECTED_FEED_COUNT
+    assert all(url.startswith("https://") for url in config.rss_urls)
+
+
+def test_env_example_committed_in_repo_is_valid() -> None:
+    """`.env.example` must yield the same feeds as the TOML example."""
+    raw = dotenv_values(REPO_ROOT / ".env.example")
+    config = parse_env_config({key: value for key, value in raw.items() if value})
+
+    assert (
+        config.rss_urls
+        == parse_toml_config(
+            tomllib.loads((REPO_ROOT / "configuration.toml.example").read_text(encoding="utf-8"))
+        ).rss_urls
+    )
+    assert len(config.rss_urls) == EXPECTED_FEED_COUNT
