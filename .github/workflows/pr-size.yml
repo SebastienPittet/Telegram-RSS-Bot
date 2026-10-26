@@ -1,0 +1,45 @@
+name: PR size
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  pull-requests: write
+  statuses: write
+
+jobs:
+  size:
+    name: Label & badge
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compute size, add label and status badge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          stats=$(gh api "repos/$REPO/pulls/$PR" --jq '[.additions,.deletions]|@csv')
+          add=$(echo "$stats" | cut -d, -f1)
+          del=$(echo "$stats" | cut -d, -f2)
+          total=$((add + del))
+          if   [ $total -lt 50 ];   then size="size/xs"
+          elif [ $total -lt 250 ];  then size="size/s"
+          elif [ $total -lt 1000 ]; then size="size/m"
+          elif [ $total -lt 2500 ]; then size="size/l"
+          else size="size/xl"; fi
+
+          # create labels on first use (ignore conflicts)
+          gh api -X POST "repos/$REPO/labels" -f name="$size" -f color=ededed || true
+          gh pr edit "$PR" --repo "$REPO" --remove-label \
+            size/xs,size/s,size/m,size/l,size/xl 2>/dev/null || true
+          gh pr edit "$PR" --repo "$REPO" --add-label "$size"
+
+          desc="$total changed lines (+$add/-$del)"
+          state=success
+          [ $total -ge 2500 ] && state=warning
+          gh api -X POST "repos/$REPO/statuses/$SHA" \
+            -f state="$state" -f context="PR size" \
+            -f description="$desc" -f target_url="https://github.com/$REPO/pull/$PR"
+          echo ":ruler: PR size: **$size** ($desc)" >> "$GITHUB_STEP_SUMMARY"

@@ -14,6 +14,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy the bot package into the container
 COPY bot/ ./bot/
 
 # Writable heartbeat directory (mounted as emptyDir in Kubernetes).

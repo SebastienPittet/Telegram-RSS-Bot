@@ -1,179 +1,187 @@
-import requests
-import feedparser
-import schedule
-import time
-from time import gmtime, strftime
-from dateutil.parser import parse
+"""Telegram RSS bot — application wiring and scheduler entry point.
+
+This module is import-safe: nothing happens at import time. ``run_cycle``
+orchestrates one feed cycle and returns the number of messages published,
+which makes it directly testable. Run with ``python -m bot``.
+"""
+
+from __future__ import annotations
+
+import argparse
 import logging
-import tomllib
-from dotenv import load_dotenv
 import os
+import signal
+import sys
+import threading
+from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import UTC, datetime
+from pathlib import Path
+
+import requests
+import schedule
+
+from bot.config import Config, ConfigError, load_config
+from bot.feeds import (
+    FeedEntry,
+    build_message,
+    fetch_feed,
+    parse_feed,
+    prune_seen,
+    select_new_entries,
+)
+from bot.telegram import send_message
+
+LOGGER = logging.getLogger(__name__)
+
+MAX_FETCH_WORKERS = 8
+TICK_SECONDS = 1
+HEARTBEAT_ENV = "HEARTBEAT_FILE"
 
 
-# Basic configuration for logging events
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+def utc_now() -> datetime:
+    """Current time as an aware UTC datetime (single clock for the app)."""
+    return datetime.now(UTC)
 
 
-# Functions
+def setup_logging(level: str = "INFO") -> None:
+    """Configure root logging once, writing to stdout (12-factor)."""
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        stream=sys.stdout,
+    )
 
-def load_configuration(configfile: str = "configuration.toml") -> dict:
+
+def collect_entries(
+    urls: Sequence[str],
+    session: requests.Session,
+    *,
+    max_workers: int = MAX_FETCH_WORKERS,
+) -> list[FeedEntry]:
+    """Fetch and parse every feed concurrently; failing feeds are skipped."""
+    entries: list[FeedEntry] = []
+    if not urls:
+        return entries
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(urls))) as pool:
+        futures = {pool.submit(fetch_feed, url, session): url for url in urls}
+        for future in as_completed(futures):
+            url = futures[future]
+            try:
+                payload = future.result()
+            except Exception as exc:  # noqa: BLE001 - one bad feed must not kill the cycle
+                LOGGER.warning("Could not fetch %s: %s", url, exc)
+                continue
+            entries.extend(parse_feed(payload))
+    return entries
+
+
+def run_cycle(
+    config: Config,
+    session: requests.Session,
+    seen: dict[str, float],
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Run one feed cycle: fetch, filter, publish. Returns messages sent.
+
+    ``seen`` maps entry id -> first-seen timestamp and is kept across cycles
+    so entries are never published twice (per process). Entries are only
+    marked as seen once Telegram accepted them, so failures retry next cycle.
     """
-    Read a configuration file, TOML formatted.
-    If Config file fails, defaults to ENV VARs
-    Outputs a dict with the configuration.
+    current = now if now is not None else utc_now()
+    pruned = prune_seen(seen, current.timestamp(), 2 * config.entry_max_time_old)
+    if len(pruned) != len(seen):
+        seen.clear()
+        seen.update(pruned)
 
-    Example of a configuration.toml:
-    # Configuration file for Telegram Bot
+    entries = collect_entries(config.rss_urls, session)
+    LOGGER.info("Parsed %d entr(ies) from %d feed(s).", len(entries), len(config.rss_urls))
 
-    # General settings
-    TIME_INTERVAL_MIN = 20  # Run the feedparser every n minutes
-    ENTRY_MAX_TIME_OLD = 1200  # 1200 seconds = 20 min
+    sent = 0
+    for entry in select_new_entries(entries, current, config.entry_max_time_old, seen.keys()):
+        if send_message(session, config.bot_token, config.channel_id, build_message(entry)):
+            seen[entry.entry_id] = current.timestamp()
+            sent += 1
+    return sent
 
-    # Bot Configuration
-    BOT_TOKEN = "YOUR BOT TOKEN"
-    CHANNEL_ID = "@YourChannel"
 
-    # News, RSS feeds
-    RSS_URLS = [
-        "https://korben.info/feed",
-        "https://www.ictjournal.ch/taxonomy/term/404/feed",
-        "https://www.ictjournal.ch/taxonomy/term/31/feed",
-        "https://www.ictjournal.ch/taxonomy/term/406/feed",
-        "https://www.newsd.admin.ch/newsd/feeds/rss?lang=fr&org-nr=1&offer-nr=308",
-        "https://feeds.feedburner.com/TheHackersNews",
-        "https://mspoweruser.com/feed/",
-        "https://www.numerama.com/feed/",
-        ]
-    """
-    config = {}
+def write_heartbeat(path: str) -> None:
+    """Touch the heartbeat file used by the Kubernetes liveness probe."""
+    if not path:
+        return
     try:
-        with open(configfile, "rb") as f:
-            config = tomllib.load(f)
-            logging.info("Configuration file found and loaded.")
-
-    except Exception as e:
-        logging.error(f"Configuration file error:  {str(e)}")
-
-        # Defaults to ENV VARs
-        logging.info("Switching on config from ENV VARS.")
-        load_dotenv()
-
-        config = {
-            "TIME_INTERVAL_MIN": int(os.getenv("TIME_INTERVAL_MIN")),
-            "ENTRY_MAX_TIME_OLD": int(os.getenv("ENTRY_MAX_TIME_OLD")),
-            "BOT_TOKEN": os.getenv("BOT_TOKEN"),
-            "CHANNEL_ID": os.getenv("CHANNEL_ID"),
-            "RSS_URLS": os.getenv("RSS_URLS").split(),
-        }
-    finally:
-        logging.debug(config)
-        if config:
-            logging.info("Telegram Bot configured.")
-        else:
-            logging.error("No configuration found. Set ENV Vars!")
-    return config
+        Path(path).write_text(str(utc_now().timestamp()), encoding="utf-8")
+    except OSError as exc:
+        LOGGER.warning("Could not write heartbeat file %s: %s", path, exc)
 
 
-def send_message(bot_token: str,
-                 channel_id: str,
-                 message: str):
-    """
-    Update the Telegram bot, using a security token,
-    a channel id and a message to post.
-    """
+def _make_job(
+    config: Config,
+    session: requests.Session,
+    seen: dict[str, float],
+    heartbeat_file: str,
+) -> Callable[[], None]:
+    """Build the scheduled job: one cycle, isolated from crashes."""
+
+    def job() -> None:
+        try:
+            sent = run_cycle(config, session, seen)
+            LOGGER.info("Cycle finished: %d new message(s) published.", sent)
+            write_heartbeat(heartbeat_file)
+        except Exception:
+            LOGGER.exception("Feed cycle failed; retrying on next tick.")
+
+    return job
+
+
+def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Telegram RSS bot")
+    parser.add_argument(
+        "--config",
+        default="configuration.toml",
+        help="Path to a TOML configuration file (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--log-level",
+        default=os.getenv("LOG_LEVEL", "INFO"),
+        help="Logging level: DEBUG, INFO, WARNING, ERROR (default: %(default)s).",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Load configuration and run the scheduler until SIGTERM/SIGINT."""
+    args = _parse_args(argv)
+    setup_logging(args.log_level)
     try:
-        requests.get(f'https://api.telegram.org/bot{bot_token}/sendMessage?chat_id={channel_id}&text={message}')
-        logging.info(f"Bot content updated with {message}.")
-    except requests.exceptions as e:
-        logging.exception(f"An exception occurred:  {str(e)}")
+        config = load_config(args.config)
+    except ConfigError as exc:
+        LOGGER.critical("Configuration error: %s", exc)
+        return 2
 
-    return
+    stop_event = threading.Event()
 
+    def request_stop(signum: int, _frame: object) -> None:
+        LOGGER.info("Received %s, shutting down.", signal.Signals(signum).name)
+        stop_event.set()
 
-# Parsing rss
-def parse_rss(rss_feeds: list,
-              entry_max_time_old: int):
-    """
-    Parse a list of RSS feeds, defined in a configuration file.
-    Only keep the latest news (ENTRY_MAX_TIME_OLD).
-    Update the telegram bot.
-    """
-    feeds = []
-    # get current time and format it with "strftime" method.
-    # The strftime() method returns a string representing date
-    # and time using date, time or datetime object.
-    currenttime = strftime("%Y-%m-%d %H:%M:%S", gmtime())
-    parsecurrenttime = parse(currenttime)
-    logging.debug(f"Current time parsed: {parsecurrenttime}")
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, request_stop)
 
-    for url in rss_feeds:
-        feed = feedparser.parse(url)
-        feeds.append(feed)
-        logging.debug(f"Parsing feed: {url}")
-        if not feed.entries:
-            logging.warning(f"No entries found for feed: {url}")
+    session = requests.Session()
+    seen: dict[str, float] = {}
+    job = _make_job(config, session, seen, os.getenv(HEARTBEAT_ENV, ""))
 
-    for feed in feeds:
-        for entry in feed.entries:
-            # get published time from feedparser and format it with "strftime" method.
-            # The strftime() method returns a string representing date and time
-            # using date, time or datetime object.
-            publishedtime = strftime("%Y-%m-%d %H:%M:%S", entry.published_parsed)
-            parsepublishedtime = parse(publishedtime)
-            deltatime = parsecurrenttime - parsepublishedtime
+    schedule.every(config.time_interval_min).minutes.do(job)
+    LOGGER.info("Scheduler set for a run every %d minute(s).", config.time_interval_min)
 
-            # For debugging purposes
-            logging.debug(f"Processing entry: {entry.title}, Published time: {parsepublishedtime}, Delta time: {deltatime.total_seconds()} seconds")
-
-            if (deltatime.total_seconds() < entry_max_time_old):
-                logging.info(f"Added new entry: {entry.title} -> {entry.link}")
-
-                # Update telegram bot
-                message = entry.title + "   " + entry.link
-                send_message(bot_token, channel_id, message)
-
-            # For debugging purposes
-            else:
-                logging.debug(f"Entry too old: {entry.title}")
-
-    logging.debug("Feeds checked. Sleeping for now.")
-    return
-
-# ######################################################################################
-
-
-# Load configuration
-config = load_configuration()
-
-# Get values from configuration
-bot_token = config['BOT_TOKEN']
-channel_id = config['CHANNEL_ID']
-rss_urls = config['RSS_URLS']
-entry_max_time_old = config['ENTRY_MAX_TIME_OLD']
-time_interval_min = config['TIME_INTERVAL_MIN']
-
-# TEST
-# Send a test message using the loaded configuration
-# test_message = 'This is a test message to ensure bot connectivity.'
-# send_message(bot_token, channel_id, test_message)
-
-# Log that a test message has been sent
-# logging.info("Test message sent to ensure bot connectivity.")
-
-
-def main():
-    # Schedule the task to run every n minutes
-    schedule.every(time_interval_min).minutes.do(parse_rss,
-                                                 rss_feeds=rss_urls,
-                                                 entry_max_time_old=entry_max_time_old)
-    logging.info(f"Scheduler set for a run every {time_interval_min} minutes.")
-
-    # Run the scheduled tasks indefinitely
-    while True:
+    job()  # run immediately so liveness passes soon after (re)start
+    while not stop_event.wait(TICK_SECONDS):
         schedule.run_pending()
-        time.sleep(1)
+    LOGGER.info("Bot stopped cleanly.")
+    return 0
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    raise SystemExit(main())
