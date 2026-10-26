@@ -135,12 +135,40 @@ def _make_job(
     return job
 
 
+def run_once(
+    config: Config,
+    session: requests.Session,
+    heartbeat_file: str = "",
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Run exactly one feed cycle and return a process exit code.
+
+    Used by ``--once`` to validate a token or a feed without waiting for the
+    schedule. A broken cycle is reported as exit code 1 rather than raised,
+    so callers get a usable status instead of a traceback.
+    """
+    try:
+        sent = run_cycle(config, session, {}, now=now)
+    except Exception:
+        LOGGER.exception("Single run failed.")
+        return 1
+    LOGGER.info("Single run finished: %d new message(s) published.", sent)
+    write_heartbeat(heartbeat_file)
+    return 0
+
+
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Telegram RSS bot")
     parser.add_argument(
         "--config",
         default="configuration.toml",
         help="Path to a TOML configuration file (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run a single cycle, then exit (exit code 1 if the cycle failed).",
     )
     parser.add_argument(
         "--log-level",
@@ -159,6 +187,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigError as exc:
         LOGGER.critical("Configuration error: %s", exc)
         return 2
+
+    if args.once:
+        return run_once(config, requests.Session(), os.getenv(HEARTBEAT_ENV, ""))
 
     stop_event = threading.Event()
 

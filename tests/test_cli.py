@@ -6,7 +6,7 @@ from pathlib import Path
 
 from bot.config import Config
 from bot.telegram_rss_bot import _parse_args, run_once
-from tests.conftest import FakeResponse, FakeSession, make_rss
+from tests.conftest import NOW, FakeResponse, FakeSession, make_rss
 
 CONFIG = Config(
     time_interval_min=1,
@@ -16,7 +16,9 @@ CONFIG = Config(
     rss_urls=("https://example.com/feed",),
 )
 
-ONE_ITEM = make_rss([{"title": "New", "link": "https://example.com/n", "guid": "n", "age_seconds": 60}])
+ONE_ITEM = make_rss(
+    [{"title": "New", "link": "https://example.com/n", "guid": "n", "age_seconds": 60}]
+)
 
 
 def test_once_flag_defaults_to_off() -> None:
@@ -32,7 +34,7 @@ def test_run_once_publishes_exactly_one_cycle() -> None:
     session.get_responses.append(FakeResponse(200, ONE_ITEM))
     session.post_responses.append(FakeResponse(200))
 
-    assert run_once(CONFIG, session) == 0
+    assert run_once(CONFIG, session, now=NOW) == 0
     assert len(session.get_calls) == 1
     assert len(session.post_calls) == 1
 
@@ -43,7 +45,7 @@ def test_run_once_writes_the_heartbeat(tmp_path: Path) -> None:
     session.post_responses.append(FakeResponse(200))
     heartbeat = tmp_path / "heartbeat"
 
-    assert run_once(CONFIG, session, str(heartbeat)) == 0
+    assert run_once(CONFIG, session, str(heartbeat), now=NOW) == 0
     assert heartbeat.exists()
 
 
@@ -53,4 +55,4 @@ def test_run_once_reports_failure_instead_of_raising() -> None:
     session.get_responses.append(FakeResponse(200, ONE_ITEM))
     session.post_responses.append(RuntimeError("boom"))
 
-    assert run_once(CONFIG, session) == 1
+    assert run_once(CONFIG, session, now=NOW) == 1
